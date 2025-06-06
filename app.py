@@ -6,12 +6,34 @@ import os
 from dotenv import load_dotenv
 from sklearn.metrics.pairwise import cosine_similarity
 
+# Page config
+st.set_page_config(page_title="UAE VAT Companion", page_icon="🧾", layout="wide")
+
+# Header section
+st.markdown(
+    """
+    <h1 style='text-align: center; color: #2E86C1;'>🧾 UAE VAT Companion</h1>
+    <p style='text-align: center; font-size: 18px;'>Your trusted UAE VAT companion.</p>
+    <hr>
+    """,
+    unsafe_allow_html=True
+)
+
+# Sidebar
+with st.sidebar:
+    st.header("About this tool")
+    st.info("Get UAE VAT answers backed by legal references from Decree-Law & Executive Regulations.")
+    st.markdown("**Examples:**")
+    st.markdown("- What is the VAT on free samples?\n- What is deemed supply?\n- Is VAT applicable on imported goods for repair and re-export?")
+
+
 # Load environment variables
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Load embeddings
+# Load data
 @st.cache_resource
+
 def load_embeddings():
     def load_and_prepare(path, source_name):
         df = pd.read_pickle(path)
@@ -19,47 +41,29 @@ def load_embeddings():
         df["embedding"] = df["embedding"].apply(lambda x: np.array(x))
         df["source"] = source_name
         return df
-    df_law = load_and_prepare("vat_law_exe_embeddings.pkl", "Source")
+
+    df_law = load_and_prepare("vat_law_exe_embeddings.pkl", "VAT Decree Law or Executive Regulations")
     return pd.concat([df_law], ignore_index=True)
 
-# UI Setup
-st.set_page_config(page_title="Your UAE VAT Companion", layout="centered")
-
-# Initialize session state
-if "query_history" not in st.session_state:
-    st.session_state.query_history = []
-if "feedback_log" not in st.session_state:
-    st.session_state.feedback_log = []
-
-# Load embeddings
 with st.spinner("Loading VAT legal data..."):
     df = load_embeddings()
 
-st.title("🧾 UAE VAT Companion")
-st.markdown("Ask any VAT question and get clause-level references from UAE VAT Law and Executive Regulations.")
+# Input box
+question = st.text_area("💬 Ask your VAT question:", placeholder="e.g., What is the VAT treatment of import of goods for repair and re-export?")
 
-# User question
-question = st.text_area("💬 Ask your VAT question:", placeholder="e.g., Is VAT applicable on free samples?")
-submit = st.button("Submit")
-
-if submit and question:
-    st.session_state.query_history.append(question)
-
-    with st.spinner("Analyzing..."):
+if question:
+    with st.spinner("Generating answer..."):
         question_embedding = openai.embeddings.create(
-            input=[question],
-            model="text-embedding-3-small"
+            input=[question], model="text-embedding-3-small"
         ).data[0].embedding
         question_embedding = np.array(question_embedding)
 
-        df["similarity"] = df["embedding"].apply(
-            lambda x: cosine_similarity([x], [question_embedding])[0][0]
-        )
-
+        df["similarity"] = df["embedding"].apply(lambda x: cosine_similarity([x], [question_embedding])[0][0])
         top_chunks = df.sort_values("similarity", ascending=False).head(10)
 
         context = ""
         for _, row in top_chunks.iterrows():
+
             context += f"""
 📜 Reference: {row['source']}  
 📘 Title {row.get('title_number', '')}: {row.get('title_name', '')}  
@@ -157,33 +161,13 @@ Use bullet points. Explain in simple English how the clause applies in practice
         )
 
         result = response.choices[0].message.content
-        st.session_state.last_answer = result
         st.success("✅ Here’s your answer:")
         st.markdown(result)
 
-# Feedback Section
-if "last_answer" in st.session_state:
-    st.subheader("👍 Was this answer helpful?")
-    feedback = st.radio("Your Feedback:", ["Yes", "No"], key="feedback_radio", horizontal=True)
-    if st.button("Submit Feedback"):
-        st.session_state.feedback_log.append({"question": question, "feedback": feedback})
-        st.success("✅ Thank you for your feedback!")
-
-# Download Section
-if "last_answer" in st.session_state:
-    st.subheader("⬇️ Download your response")
-    st.download_button("Download as TXT", st.session_state.last_answer, file_name="vat_response.txt")
-
-# Query History
-if st.session_state.query_history:
-    st.subheader("📚 Your Previous Questions")
-    for i, q in enumerate(reversed(st.session_state.query_history[-5:]), start=1):
-        st.markdown(f"**{i}.** {q}")
-
-# Theme Toggle
-st.sidebar.title("⚙️ Settings")
-theme = st.sidebar.selectbox("Choose Theme", ["Light", "Dark"])
-if theme == "Dark":
-    st.markdown("""<style>.main { background-color: #1e1e1e; color: white; }</style>""", unsafe_allow_html=True)
-else:
-    st.markdown("""<style>.main { background-color: white; color: black; }</style>""", unsafe_allow_html=True)
+        # Feedback section
+        with st.expander("💬 Was this answer helpful?"):
+            feedback = st.radio("Please let us know:", ["👍 Yes", "👎 No"], horizontal=True)
+            if feedback == "👎 No":
+                issue = st.text_area("What could be improved? (Optional)")
+                if st.button("Submit Feedback"):
+                    st.success("Thank you! Your feedback helps us improve.")
